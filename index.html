@@ -49,11 +49,14 @@
   .rec-status .dot.on{background:var(--warn)}
   @keyframes blink{50%{opacity:.25}}
   .rec-wrap{position:relative;width:238px;height:238px;display:grid;place-items:center}
-  .ring{position:absolute;inset:0;transform:rotate(-90deg)}
+  /* КЛЮЧЕВОЙ ФИКС: кольцо не перехватывает касания */
+  .ring{position:absolute;inset:0;transform:rotate(-90deg);pointer-events:none}
   .ring circle{fill:none;stroke-width:5;stroke-linecap:round}
   .ring .bgc{stroke:var(--line)}
   .ring .fgc{stroke:var(--accent);stroke-dasharray:704;stroke-dashoffset:704}
+  /* КЛЮЧЕВОЙ ФИКС: кнопка всегда поверх */
   .rec-btn{
+    position:relative;z-index:2;
     width:186px;height:186px;border-radius:50%;
     background:var(--surface);border:1px solid var(--line);
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
@@ -61,9 +64,9 @@
   }
   .rec-btn:active{transform:scale(.97)}
   .rec-btn.recording{border-color:rgba(255,177,61,.45);background:#191410}
-  .rec-btn svg{width:52px;height:52px;stroke:var(--accent);stroke-width:1.8;fill:none;stroke-linecap:round;stroke-linejoin:round}
-  .rec-btn .lbl{font-size:11px;letter-spacing:.22em;color:var(--muted);text-transform:uppercase}
-  .rec-btn .timer{font-family:'Unbounded';font-size:27px;font-weight:500;font-variant-numeric:tabular-nums;color:var(--text);display:none}
+  .rec-btn svg{width:52px;height:52px;stroke:var(--accent);stroke-width:1.8;fill:none;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+  .rec-btn .lbl{font-size:11px;letter-spacing:.22em;color:var(--muted);text-transform:uppercase;pointer-events:none}
+  .rec-btn .timer{font-family:'Unbounded';font-size:27px;font-weight:500;font-variant-numeric:tabular-nums;color:var(--text);display:none;pointer-events:none}
   .rec-btn.recording .lbl{display:none}
   .rec-btn.recording .timer{display:block}
   .rec-btn .ic-stop{display:none;width:40px;height:40px}
@@ -226,7 +229,7 @@
 <div id="app">
   <header>
     <div class="logo">SPEECH<em>·</em>MENTOR</div>
-    <div class="tagline">тренер выступлений · v3</div>
+    <div class="tagline">тренер выступлений · v4</div>
   </header>
 
   <main>
@@ -775,7 +778,6 @@ function renderResult(r){
   if (r.words) $('#mFillBox').classList.toggle('bad', r.fill100 > 4);
   $('#mPauseBox').classList.toggle('bad', r.pauseRatio > 22);
 
-  /* Плашки прогресса с прошлой записи */
   var dc = $('#deltas');
   if (r.cmp && r.cmp.length){
     dc.style.display = 'flex';
@@ -801,7 +803,6 @@ function renderResult(r){
   });
   $('#pRatio').textContent = r.pauseRatio + '% времени';
 
-  /* Проблема → решение */
   $('#tipsList').innerHTML = r.tips.map(function(t,i){
     return '<div class="tip'+(t.good?' good':'')+'">'+
       '<div class="tip-head"><span class="n">'+String(i+1).padStart(2,'0')+'</span><p class="prob">'+t.p+'</p></div>'+
