@@ -226,7 +226,7 @@
 <div id="app">
   <header>
     <div class="logo">SPEECH<em>·</em>MENTOR</div>
-    <div class="tagline">тренер выступлений</div>
+    <div class="tagline">тренер выступлений · v3</div>
   </header>
 
   <main>
@@ -663,7 +663,7 @@ function finalize(){
     pauses: pauses, text: text,
     noText: !hasSR || state.srFailed
   };
-  var prev = histData.length ? histData[0] : null;   // прошлая запись (ещё не сохранённая новая)
+  var prev = histData.length ? histData[0] : null;   // прошлая запись (новая ещё не сохранена)
   result.tips = buildTips(result);
   result.cmp = buildComparison(prev, result);
   state.lastResult = result;
@@ -750,9 +750,11 @@ function buildComparison(prev, r){
   add('Паразиты', prev.fill100, r.fill100, true);
   add('Паузы %', prev.pauseRatio, r.pauseRatio, true);
   if (prev.wpm && r.wpm){
-    var d0 = Math.abs(prev.wpm - 137), d1 = Math.abs(r.wpm - 137);
     if (Math.abs(r.wpm - prev.wpm) < 3) out.push({label:'Темп', from:prev.wpm, to:r.wpm, dir:0});
-    else out.push({label:'Темп', from:prev.wpm, to:r.wpm, dir: d1 <= d0 ? 1 : -1});
+    else {
+      var d0 = Math.abs(prev.wpm - 137), d1 = Math.abs(r.wpm - 137);
+      out.push({label:'Темп', from:prev.wpm, to:r.wpm, dir: d1 <= d0 ? 1 : -1});
+    }
   }
   return out;
 }
@@ -929,6 +931,7 @@ document.querySelectorAll('.seg-control button').forEach(function(b){
 function drawChart(){
   var cv = $('#chart'), box = $('#chartBox');
   var w = box.clientWidth - 16, h = 230, dpr = window.devicePixelRatio || 1;
+  if (w <= 0) return;
   cv.width = w*dpr; cv.height = h*dpr; cv.style.width = w+'px'; cv.style.height = h+'px';
   var ctx = cv.getContext('2d'); ctx.scale(dpr,dpr); ctx.clearRect(0,0,w,h);
   var data = histData.slice().reverse();
@@ -976,7 +979,7 @@ function drawChart(){
   var nL = Math.min(data.length, 5);
   ctx.fillStyle = '#8E8C96'; ctx.font = '10px Golos Text, sans-serif';
   for (var k=0; k<nL; k++){
-    var idx = Math.round(k*(data.length-1)/(nL-1));
+    var idx = nL > 1 ? Math.round(k*(data.length-1)/(nL-1)) : 0;
     ctx.fillText(fmtDate(data[idx].ts), X(idx), h-8);
   }
 }
@@ -1014,14 +1017,16 @@ function renderWeeks(){
 
 /* ═══════════ Навигация ═══════════ */
 function switchView(id){
+  var tabId = (id === 'view-result') ? 'view-record' : id;
   document.querySelectorAll('.view').forEach(function(v){ v.classList.remove('active'); });
   document.getElementById(id).classList.add('active');
-  document.querySelectorAll('nav button').forEach(function(b){ b.classList.toggle('on', b.dataset.view===id); });
+  document.querySelectorAll('nav button').forEach(function(b){ b.classList.toggle('on', b.dataset.view===tabId); });
   document.getElementById(id).scrollTop = 0;
 }
 document.querySelectorAll('nav button').forEach(function(b){
   b.addEventListener('click', function(){
     var id = b.dataset.view;
+    if (id === 'view-record' && state.lastResult){ switchView('view-result'); return; }
     if (id === 'view-history') renderHistory();
     if (id === 'view-progress'){ renderWeeks(); requestAnimationFrame(drawChart); }
     switchView(id);
