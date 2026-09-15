@@ -49,12 +49,10 @@
   .rec-status .dot.on{background:var(--warn)}
   @keyframes blink{50%{opacity:.25}}
   .rec-wrap{position:relative;width:238px;height:238px;display:grid;place-items:center}
-  /* КЛЮЧЕВОЙ ФИКС: кольцо не перехватывает касания */
   .ring{position:absolute;inset:0;transform:rotate(-90deg);pointer-events:none}
   .ring circle{fill:none;stroke-width:5;stroke-linecap:round}
   .ring .bgc{stroke:var(--line)}
   .ring .fgc{stroke:var(--accent);stroke-dasharray:704;stroke-dashoffset:704}
-  /* КЛЮЧЕВОЙ ФИКС: кнопка всегда поверх */
   .rec-btn{
     position:relative;z-index:2;
     width:186px;height:186px;border-radius:50%;
@@ -229,7 +227,7 @@
 <div id="app">
   <header>
     <div class="logo">SPEECH<em>·</em>MENTOR</div>
-    <div class="tagline">тренер выступлений · v4</div>
+    <div class="tagline">тренер выступлений · v5</div>
   </header>
 
   <main>
@@ -344,7 +342,6 @@
   </nav>
 </div>
 <div id="toast"></div>
-<audio id="micKeep" playsinline webkit-playsinline style="display:none"></audio>
 
 <script>
 'use strict';
@@ -443,13 +440,13 @@ var hasSR = !!SR;
 var state = {
   recording:false, stopping:false, finalized:false, finalT:null,
   stream:null, mediaRecorder:null, chunks:[], blob:null, blobUrl:null,
-  audioCtx:null, analyser:null, meterInt:null, timerInt:null,
+  audioCtx:null, srcNode:null, analyser:null, meterInt:null, timerInt:null,
   recog:null, parts:[], interim:'', seen:null, sessionKey:0, srFailed:false,
   startTs:0, durMs:0, silenceStart:null, pauses:[], level:0,
   wakeLock:null, lastResult:null
 };
 
-/* ═══════════ Доступ к микрофону (с диагностикой) ═══════════ */
+/* ═══════════ Доступ к микрофону (с таймаутом и диагностикой) ═══════════ */
 async function getMic(){
   if (!window.isSecureContext){
     showMicProblem('Микрофон доступен только по HTTPS или на localhost. Сейчас страница открыта как локальный файл — залей её на GitHub Pages / Vercel.');
@@ -460,12 +457,23 @@ async function getMic(){
     return false;
   }
   try{
-    state.stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true}});
+    var req = navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true}});
+    var timeout = new Promise(function(_, rej){
+      setTimeout(function(){ rej({name:'Timeout', message:'микрофон не ответил за 10 секунд'}); }, 10000);
+    });
+    state.stream = await Promise.race([req, timeout]);
     return true;
   }catch(e){
-    showMicProblem(e.name === 'NotAllowedError'
+    // если запрос всё же завершится позже — не держим микрофон
+    try{
+      navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){
+        s.getTracks().forEach(function(t){ t.stop(); });
+      }, function(){});
+    }catch(e2){}
+    var nm = e && e.name ? e.name : 'Ошибка';
+    showMicProblem(nm === 'NotAllowedError'
       ? 'Доступ к микрофону запрещён. Разреши его: значок «АА» слева в адресной строке → Настройки веб-сайта → Микрофон → Разрешить.'
-      : 'Ошибка микрофона: ' + e.name + '. ' + (e.message || ''));
+      : 'Ошибка микрофона: ' + nm + '. ' + (e && e.message ? e.message : ''));
     return false;
   }
 }
@@ -481,19 +489,22 @@ async function startRecording(){
   state.pauses = []; state.silenceStart = null; state.level = 0; state.blob = null; state.srFailed = false;
   $('#srNotice').classList.remove('on');
 
+  /* Web Audio: ОДИН контекст на всю жизнь страницы, никогда не усыпляется.
+     Раньше контекст подвешивали после записи и создавали новый — iOS не «будит»
+     контекст без свежего касания, из-за чего вторая запись не стартовала.
+     Себя слышно не будет: выход подключён через усилитель с gain = 0. */
   try{
-    state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    await state.audioCtx.resume();
-    var src = state.audioCtx.createMediaStreamSource(state.stream);
-    var an = state.audioCtx.createAnalyser(); an.fftSize = 2048;
-    src.connect(an); state.analyser = an;
-  }catch(e){ state.analyser = null; }
-
-  // тихий плеер удерживает аудиосессию iOS при свёрнутом приложении
-  var keep = $('#micKeep');
-  try{ keep.srcObject = state.stream; }catch(e){}
-  try{ keep.volume = 0.01; }catch(e){}
-  try{ await keep.play(); }catch(e){}
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!state.audioCtx || state.audioCtx.state === 'closed') state.audioCtx = new AC();
+    var ctx = state.audioCtx;
+    if (ctx.state === 'suspended'){ try{ ctx.resume(); }catch(e2){} }
+    var src = ctx.createMediaStreamSource(state.stream);
+    var an = ctx.createAnalyser(); an.fftSize = 2048;
+    src.connect(an);
+    var silent = ctx.createGain(); silent.gain.value = 0;
+    src.connect(silent); silent.connect(ctx.destination);
+    state.srcNode = src; state.analyser = an;
+  }catch(e){ state.analyser = null; state.srcNode = null; }
 
   var mime = '';
   if (window.MediaRecorder){
@@ -510,6 +521,7 @@ async function startRecording(){
       state.blob = new Blob(state.chunks, {type: state.mediaRecorder.mimeType || mime || 'audio/webm'});
       attachPlayer();
       if (state.stream){ try{ state.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){} }
+      state.stream = null;
     };
     state.mediaRecorder.start(1000);
   }catch(e){
@@ -576,20 +588,35 @@ function stopRecording(){
   stopEverything();
 }
 function stopEverything(){
-  var keep = $('#micKeep');
-  try{ keep.pause(); keep.srcObject = null; }catch(e){}
-  if (state.audioCtx){ try{ state.audioCtx.suspend(); }catch(e){} }
+  try{ if (state.srcNode) state.srcNode.disconnect(); }catch(e){}
+  state.srcNode = null;
   releaseWakeLock();
   $('#recBtn').classList.remove('recording');
   $('#ringFg').style.strokeDashoffset = 704;
   $('#recBtn').style.transform = '';
 }
- $('#recBtn').addEventListener('click', function(){ state.recording ? stopRecording() : startRecording(); });
+ $('#recBtn').addEventListener('click', function(){
+  if (state.recording){ stopRecording(); return; }
+  /* Аудиоконтекст создаём/будим СИНХРОННО прямо в обработчике касания —
+     так требует iOS: после await жест уже не считается «живым». */
+  try{
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!state.audioCtx || state.audioCtx.state === 'closed') state.audioCtx = new AC();
+    if (state.audioCtx.state === 'suspended') state.audioCtx.resume().catch(function(){});
+  }catch(e){}
+  startRecording().catch(function(e){
+    state.recording = false; state.stopping = false;
+    $('#recBtn').classList.remove('recording');
+    showMicProblem('Не удалось начать запись: ' + (e && e.message ? e.message : e));
+  });
+});
 
 /* ═══════════ Детектор тишины + кольцо уровня ═══════════ */
 var METER_BUF = new Uint8Array(2048);
 function meterTick(){
   var an = state.analyser; if (!an) return;
+  /* контекст не работает — не считаем «тишину», чтобы не плодить фальшивые паузы */
+  if (state.audioCtx && state.audioCtx.state !== 'running') return;
   an.getByteTimeDomainData(METER_BUF);
   var sum = 0;
   for (var i=0;i<METER_BUF.length;i++){ var v=(METER_BUF[i]-128)/128; sum += v*v; }
@@ -633,8 +660,7 @@ function releaseWakeLock(){
 document.addEventListener('visibilitychange', function(){
   if (document.visibilityState === 'visible' && state.recording){
     if (!state.wakeLock) requestWakeLock();
-    if (state.audioCtx){ try{ state.audioCtx.resume(); }catch(e){} }
-    var keep = $('#micKeep'); try{ keep.play(); }catch(e){}
+    if (state.audioCtx && state.audioCtx.state === 'suspended'){ try{ state.audioCtx.resume(); }catch(e){} }
   }
 });
 
@@ -666,7 +692,7 @@ function finalize(){
     pauses: pauses, text: text,
     noText: !hasSR || state.srFailed
   };
-  var prev = histData.length ? histData[0] : null;   // прошлая запись (новая ещё не сохранена)
+  var prev = histData.length ? histData[0] : null;
   result.tips = buildTips(result);
   result.cmp = buildComparison(prev, result);
   state.lastResult = result;
@@ -689,7 +715,6 @@ function buildTips(r){
       f:'Поговори минимум 60–90 секунд на любую тему: расскажи, чем занимался вчера, или перескажи сюжет фильма. Это полноценная тренировка, не «проба микрофона».', good:false});
     return tips;
   }
-  /* ── Паразиты ── */
   if (r.fill100 > 8){
     tips.push({p:'Слов-паразитов очень много: <b>'+r.fill100+'</b> на 100 слов — почти каждое десятое слово «пустое».',
       f:'Упражнение «Пауза вместо слова»: 3 минуты говори на случайную тему; потянуло сказать «эм» или «ну» — закрой рот и молчи секунду, потом продолжай мысль. Первые 3–4 дня паразитов станет даже больше — это нормально, включился самоконтроль. К концу недели счёт пойдёт резко вниз.', good:false});
@@ -703,7 +728,6 @@ function buildTips(r){
     tips.push({p:'Ни одного слова-паразита — редкий уровень чистоты речи.',
       f:'Как усилить: добавь интонационные ударения — выделяй голосом одно ключевое слово в фразе. Чистая, но ровная речь звучит монотонно; акценты вернут ей вес.', good:true});
   }
-  /* ── Темп ── */
   if (r.wpm && r.wpm < 95){
     tips.push({p:'Темп низкий: <b>'+r.wpm+'</b> слов/мин — слушателю легко заскучать.',
       f:'Упражнение «Абзац на время»: возьми текст на ~100 слов и читай вслух под секундомер. Цель — уложиться в 45–50 секунд. Повтори 3 раза, ускоряясь, но проговаривая все окончания. Перед записью сделай 2 минуты скороговорок — медленный темп часто идёт от «зажатой» артикуляции.', good:false});
@@ -720,7 +744,6 @@ function buildTips(r){
     tips.push({p:'Темп отличный: <b>'+r.wpm+'</b> слов/мин — комфортная зона восприятия.',
       f:'Как усилить: меняй темп внутри речи — ключевую мысль произноси заметно медленнее окружающего текста. Контраст скорости удерживает внимание лучше ровного ритма.', good:true});
   }
-  /* ── Паузы ── */
   if (r.pauseCount === 0 && r.durMs > 45000){
     tips.push({p:'Ни одной паузы за '+fmtDur(r.durMs)+' — речь идёт сплошным потоком.',
       f:'Упражнение «Красный свет»: пересказывай текст, представляя, что после каждой ключевой мысли — светофор: полная остановка на 1–1,5 секунды. В паузе не заполняй тишину звуком — просто дыши. Для зала пауза — знак «тут важно».', good:false});
@@ -740,7 +763,6 @@ function buildTips(r){
   return tips;
 }
 
-/* Сравнение с прошлой записью */
 function buildComparison(prev, r){
   if (!prev || !prev.words || !r.words) return [];
   var out = [];
