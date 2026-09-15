@@ -1,0 +1,28 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Диагностика микрофона</title></head>
+<body style="font-family:-apple-system,sans-serif;padding:20px;max-width:520px;margin:auto;line-height:1.5">
+<h2>Диагностика</h2>
+<pre id="o" style="background:#f4f4f4;padding:12px;white-space:pre-wrap;font-size:13px"></pre>
+<button id="b" style="padding:14px 20px;font-size:16px;margin-top:10px">Проверить микрофон</button>
+<script>
+var iOSver = '';
+var m = navigator.userAgent.match(/OS (\d+)[._](\d+)/);
+if (m) iOSver = m[1] + '.' + m[2];
+var o = document.getElementById('o');
+o.textContent = 'Адрес: ' + location.href +
+  '\nHTTPS (secure): ' + window.isSecureContext +
+  '\nВерсия iOS: ' + (iOSver || 'не iOS') +
+  '\nMediaRecorder: ' + (typeof MediaRecorder !== 'undefined') +
+  '\nSpeechRecognition: ' + !!(window.SpeechRecognition || window.webkitSpeechRecognition) +
+  '\ngetUserMedia: ' + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+document.getElementById('b').onclick = async function(){
+  try{
+    var s = await navigator.mediaDevices.getUserMedia({audio:true});
+    o.textContent += '\n✅ МИКРОФОН ДОСТУПЕН';
+    s.getTracks().forEach(function(t){t.stop();});
+  }catch(e){
+    o.textContent += '\n❌ ' + e.name + ': ' + e.message;
+  }
+};
+</script></body></html>
