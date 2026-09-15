@@ -1,4 +1,4 @@
-const CACHE = 'speech-mentor-v3';
+const CACHE = 'speech-mentor-v4';
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./', './index.html'])).then(() => self.skipWaiting()));
 });
@@ -8,7 +8,7 @@ self.addEventListener('activate', e => {
 });
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  // HTML — сначала сеть, офлайн — из кэша
+  // HTML — всегда сначала сеть, офлайн — из кэша
   if (e.request.mode === 'navigate' || (e.request.headers.get('accept') || '').includes('text/html')) {
     e.respondWith(
       fetch(e.request).then(res => {
